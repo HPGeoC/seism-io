@@ -1,0 +1,161 @@
+!@section LICENSE
+!Copyright (c) 2013-2017, Regents of the University of California
+!All rights reserved.
+!Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+!1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+!2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+!THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+!      use iso_c_binding
+
+!/*
+! seism_calc_rec calculates and counts the receivers' local indices
+! processor indices are 0-based because of the MPI calls
+! all other indices are 1-based (in GPU code npbgx was 0-based!)
+!*/
+!      interface
+!        subroutine seism_calc_rec(nxt, nyt, nzt, nbgx, nedx, nskpx,
+!     +    nbgy, nedy, nskpy, nbgz, nedz, nskpz,
+!     +    npbgx, npedx, npbgy, npedy, npbgz, npedz,
+!     +    nprecx, nprecy, nprecz, coords) bind(C)
+!          use iso_c_binding, only: c_int
+!          integer(c_int)::nxt,nyt,nzt,nbgx,nedx,nskpx,nbgy,nedy,nskpy
+!          integer(c_int)::nbgz,nedz,nskpz,npbgx,npedx,npbgy,npedy
+!          integer(c_int)::npbgz,npedz,nprecx,nprecy,nprecz
+!	        integer(c_int),dimension(*)::coords
+!        end subroutine
+!      end interface
+
+!/* init function to initialize the SEISM lib. Reads in text input file
+!  and creates the initial group and variable objects.
+!comm    : MPI_Comm pointer for initialization. ADIOS 1.3, 1.4 requires
+!            all processors to call init, not only the writers
+!rank    : MPI_rank of the caller (int* because fortran interface passes
+!            the pointer)
+!coords  : 3D vector of 0-based processor indices in the virtual topology
+!            (0,0,0),(1,0,0)...(PX-1,PY-1,PZ-1)
+!maxdim  : number of dimensions for the decomposition
+!err     : error code
+!*/
+      interface
+        subroutine seism_init(comm, rank, coords, maxdim,
+     +      nx, ny, nz, nxt, nyt, nzt, ghostx, ghosty, ghostz,
+     +      px, py, pz,
+     +      seism_method, err) bind(C)
+          use iso_c_binding, only: c_int
+          integer(c_int)::rank,err,comm,maxdim
+          integer(c_int)::nx,ny,nz,nxt,nyt,nzt,px,py,pz
+          integer(c_int)::ghostx,ghosty,ghostz
+          integer(c_int),dimension(*)::coords
+          character(c_char)::seism_method
+        end subroutine
+      end interface
+
+!/* creates a regular 3D grid to manipulate the variables for.
+!nbg[x,y,z]    : int - beginning global index of the grid
+!                    per dimension (1-based)
+!ned[x,y,z]    : int - ending global index
+!nskp[x,y,z]   : int - number of points to skip in each dimension (1=no skip)
+!gridID      : the index of the PointSet (0-based, kept in the LinkedList)
+!*/
+      interface
+        subroutine seism_createregulargrid(nbgx, nedx, nskpx,
+     +        nbgy, nedy, nskpy, nbgz, nedz, nskpz, gridID, err) bind(C)
+          use iso_c_binding, only: c_int
+          integer(c_int)::nbgx,nedx,nskpx
+          integer(c_int)::nbgy,nedy,nskpy
+          integer(c_int)::nbgz,nedz,nskpz
+          integer(c_int)::gridID,err
+        end subroutine
+      end interface
+
+!/* defines a new variable by creating/modifying Var object.
+!  If there is already a variable object with vname, only
+!  val is added to that object. If not, a new group is created
+!  with group name set as vname, and its firstVar (first
+!  variable) is set as a newly created Var object.
+!vname   : variable name, string, to be defined
+!val     : void* to the variable itself
+!err     : error code
+!vnlen   : length of the variable name
+!*/
+      interface
+        subroutine seism_define_var(vname, vali, valr, isReal, err) bind(C)
+          use iso_c_binding, only: c_char, c_ptr, c_int, c_float
+          integer(c_int)::err,isReal
+          character(c_char)::vname
+          integer(c_int)::vali
+          real(kind=c_float),dimension(*)::valr
+        end subroutine
+      end interface
+
+!/* file open function fortran interface
+!fname   : file name of the file
+!fmode   : file mode = "w" "r" "a" as write-read-append
+!write_step : write_step, the amount of aggregation in time
+!fdata   : file datatype ('real', 'int', 'double', 'byte', etc.)
+!psID    : PointSet ID (input)
+!fpID    : FileProfile ID (output)
+!err     : error code pointer. 0 is no error.
+!fnamelen: length of the file name
+!fmodelen: length of the file mode
+!*/
+      interface
+        subroutine seism_file_open(fname, fmode, write_step, fdata,
+     +    psID, fpID, err) bind(C)
+          use iso_c_binding, only: c_int, c_char
+          integer(c_int)::write_step,psID,fpID,err
+          character(c_char)::fname,fmode,fdata
+        end subroutine
+      end interface
+
+!/* readmesh function fortran interface
+!seism_f : FileProfile ID integer. File has to be opened before.
+!var     : pointer to multi-dimensional variable
+!err     : error code, integer pointer. 0 is no error.
+!*/
+      interface
+        subroutine seism_readmesh(fname, nvar, mediaData, err) bind(C)
+          use iso_c_binding, only: c_int, c_char, c_ptr, c_float
+          integer(c_int)::nvar,err
+          character(c_char)::fname
+          read(kind=c_float),dimension(*)::mediaData
+        end subroutine
+      end interface
+
+!/* write function fortran interface
+!seism_f : FileProfile ID integer. File has to be opened before.
+!var     : pointer to multi-dimensional variable
+!err     : error code, integer pointer. 0 is no error.
+!*/
+      interface
+        subroutine seism_write(seism_f, vari, varr, isReal, err) bind(C)
+          use iso_c_binding, only: c_int, c_float, c_ptr
+          integer(c_int)::seism_f,isReal,err
+          integer(c_int),dimension(*)::vari
+          real(kind=c_float),dimension(*)::varr
+        end subroutine
+      end interface
+
+!/* seism_file_close closes an already opened file
+!seism_f : pointer to file
+!err     : error code
+!*/
+      interface
+        subroutine seism_file_close(seism_f, err) bind(C)
+          use iso_c_binding, only: c_long_long, c_int
+          integer(c_long_long)::seism_f
+          integer(c_int)::err
+        end subroutine
+      end interface
+
+!/* seism_finalize finalizes the library
+!err : error code
+!TODO: free all the memory used by the library! delete group-var space
+!*/
+      interface
+        subroutine seism_finalize(err) bind(C)
+          use iso_c_binding, only: c_int
+          integer(c_int)::err
+        end subroutine
+      end interface
